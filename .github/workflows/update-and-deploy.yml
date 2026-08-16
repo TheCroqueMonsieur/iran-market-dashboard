@@ -6,7 +6,6 @@ on:
     paths-ignore:
       - 'data/market.json'
   schedule:
-    # Tehran market is closed well before this; UTC schedule avoids DST issues.
     - cron: '30 11 * * 0-4'
   workflow_dispatch:
 
@@ -17,7 +16,7 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -32,7 +31,7 @@ jobs:
           python-version: '3.12'
 
       - name: Fetch and validate Iranian market data
-        run: python scripts/update_data.py
+        run: python scripts/build_market_data.py
 
       - name: Commit refreshed dataset
         run: |
