@@ -1,0 +1,21 @@
+name: Data and return regression checks
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths-ignore: ['data/market.json']
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python -m unittest discover -s tests
+      - run: node tests/returns.cjs
