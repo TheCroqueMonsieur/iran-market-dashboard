@@ -26,3 +26,27 @@ GitHub Actions refreshes the data after the Tehran trading day Sunday through Th
 ## Disclaimer
 
 Research and monitoring tool only. Iranian market data can be revised, interrupted, or subject to access restrictions. Source and FX-age diagnostics are retained explicitly.
+## Coverage and return diagnostics
+
+The dashboard distinguishes the selected FX series endpoint from the dataset
+endpoint and shows the selected endpoint's underlying FX quote date. Missing or
+invalid FX ages are not treated as same-day quotes. Daily FX/USD returns require
+both adjacent dataset rows; missing observations remain gaps. Longer returns
+use fixed dataset-row offsets and require valid FX at both endpoints. YTD uses
+the previous year's final stored row; unavailable baselines produce no return.
+The 21/252-observation periods are approximations, not verified exchange-session
+counts: unusual Thursday/Friday source dates are flagged for investigation,
+not silently deleted or reassigned.
+
+`scripts/build_market_data.py` is the production builder; `scripts/update_data.py`
+is a compatibility entry point to the same implementation. Builds reject invalid
+FX ages/values, future or duplicate dates, and loss of previously published index
+dates. Source coverage and index freshness warnings are published in metadata.
+Warnings do not certify source accuracy or independently verify the calendar.
+
+Run the offline regression checks with:
+
+```sh
+python -m unittest discover -s tests
+node tests/returns.cjs
+```

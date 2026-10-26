@@ -75,6 +75,26 @@ def validate(a,b):
     dif=[abs(a[d]/b[d]-1) for d in common if a[d]>0 and b[d]>0]
     return len(dif)>=10 and statistics.median(dif)<.01,(statistics.median(dif) if dif else None),len(dif)
 
+def validate_publication(records, previous=None):
+    if sum(bool(r['fx'].get('tgju_free')) for r in records)<500:
+        raise RuntimeError('Fewer than 500 default-FX observations; refusing publication')
+    dates=[r['date'] for r in records]
+    if dates!=sorted(set(dates)):
+        raise RuntimeError('Duplicate or unsorted index dates')
+    for r in records:
+        if not math.isfinite(r['tepix']) or r['tepix']<=0:
+            raise RuntimeError('Invalid index value')
+        if dt.date.fromisoformat(r['date'])>dt.datetime.now(dt.timezone.utc).date():
+            raise RuntimeError('Future index date')
+        for k,v in r['fx'].items():
+            age=r.get('fx_age_days',{}).get(k)
+            if not math.isfinite(v) or v<=0 or type(age) is not int or not 0<=age<=4:
+                raise RuntimeError('Invalid FX value or age')
+    if previous:
+        old=previous.get('records',[])
+        if old and (dates[-1]<old[-1]['date'] or not set(r['date'] for r in old).issubset(dates)):
+            raise RuntimeError('Index history regressed; refusing publication')
+
 def main():
     notes=[]
     print('TGJU TEDPIX...',file=sys.stderr); tg=tgju('gc30')
@@ -106,11 +126,20 @@ def main():
             if last[k]:
                 fd,val=last[k];age=(dd-dt.date.fromisoformat(fd)).days
                 if 0<=age<=4:rec['fx'][k]=round(val,4);rec['fx_age_days'][k]=age
-        if rec['fx'].get('tgju_free'):recs.append(rec)
-    if len(recs)<500:raise RuntimeError(f'Only {len(recs)} aligned observations; refusing publication')
+        recs.append(rec) # Preserve index sessions even when FX is unavailable.
+    previous=json.loads(OUT.read_text()) if OUT.exists() else None
+    validate_publication(recs,previous)
+    diagnostics={k:{'latest_observation':max(v),'latest_aligned_session':next((r['date'] for r in reversed(recs) if k in r['fx']),None)} for k,v in series.items()}
+    for k,info in diagnostics.items():
+        if info['latest_aligned_session']!=recs[-1]['date']:
+            notes.append(f"Coverage warning: {k} ends {info['latest_aligned_session']}; index ends {recs[-1]['date']}.")
+    age=(dt.datetime.now(dt.timezone.utc).date()-dt.date.fromisoformat(recs[-1]['date'])).days
+    if age>4:notes.append(f'Index freshness warning: latest observation is {age} calendar days old; verify holidays or source interruption.')
+    unusual=[r['date'] for r in recs if dt.date.fromisoformat(r['date']).weekday() in (3,4)]
+    if unusual:notes.append(f'Calendar warning: {len(unusual)} Thursday/Friday index dates require source-calendar verification; retained without assuming they are trading sessions.')
     p={'schema_version':1,'updated_at':dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat(),
        'methodology':{'index':'TEDPIX / TEPIX close','default_fx':'TGJU free-market USD/IRR daily close, IRR per USD','usd_return_formula':'(TEPIX_t / TEPIX_t-1) * (USDIRR_t-1 / USDIRR_t) - 1','usd_index_formula':'100 * (TEPIX_t / USDIRR_t) / (TEPIX_base / USDIRR_base)','fx_alignment':'Most recent FX observation on or before each TSE session; maximum 4 calendar days; age disclosed'},
-       'sources':{'index':idxsrc,'index_validation':'TGJU gc30','tgju_free':'TGJU price_dollar_rl — Iranian free-market USD/IRR','bonbast_mid':'Bonbast archive — midpoint buy/sell, toman ×10 to IRR' if bb else None,'regulated':None},'notes':notes,'records':recs}
+       'sources':{'index':idxsrc,'index_validation':'TGJU gc30','tgju_free':'TGJU price_dollar_rl — Iranian free-market USD/IRR','bonbast_mid':'Bonbast archive — midpoint buy/sell, toman ×10 to IRR' if bb else None,'regulated':None},'notes':notes,'diagnostics':diagnostics,'records':recs}
     OUT.parent.mkdir(parents=True,exist_ok=True);OUT.write_text(json.dumps(p,ensure_ascii=False,separators=(',',':')),encoding='utf-8')
     print(f'Published {len(recs)} sessions through {recs[-1]["date"]}',file=sys.stderr)
 if __name__=='__main__':main()

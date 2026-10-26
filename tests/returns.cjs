@@ -1,0 +1,33 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const html=fs.readFileSync('index.html','utf8'),script=html.match(/<script>\s*([\s\S]*?)<\/script>/)[1].replace(/boot\(\);\s*$/,'');
+const c=vm.createContext({Intl,console});vm.runInContext(script,c);
+const data=JSON.parse(fs.readFileSync('data/market.json'));
+c.input=data;vm.runInContext('RAW=input;series=prepare("tgju_free")',c);
+assert.equal(vm.runInContext('series.at(-1).date',c),data.records.filter(r=>r.fx.tgju_free).at(-1).date);
+const latest=data.records.at(-1),prior=data.records.at(-2);
+assert.ok(Math.abs(vm.runInContext('series.at(-1).usdRet',c)-(latest.tepix/prior.tepix*prior.fx.tgju_free/latest.fx.tgju_free-1))<1e-12);
+assert.equal(vm.runInContext('prepare("bonbast_mid").at(-1).date',c),data.records.filter(r=>r.fx.bonbast_mid).at(-1).date);
+assert.equal(vm.runInContext('ageLabel({},"tgju_free")',c),'Unknown');
+c.input={records:[['2025-12-31',100,10],['2026-01-01',110,10],['2026-01-02',120,null],['2026-01-03',130,10]].map(([date,tepix,f])=>({date,tepix,fx:f?{x:f}:{},fx_age_days:f?{x:0}:{}}))};
+vm.runInContext('RAW=input;series=prepare("x")',c);
+assert.equal(vm.runInContext('series.length',c),4);
+assert.equal(vm.runInContext('series.at(-1).usdRet',c),null);
+assert.equal(vm.runInContext('lagReturn(1)',c),null);
+assert.ok(Math.abs(vm.runInContext('ytdReturn().v',c)-.3)<1e-12);
+assert.ok(Math.abs(vm.runInContext('series.at(-1).irrRet',c)-(130/120-1))<1e-12);
+c.input.records[3].fx_age_days.x=5;
+assert.equal(vm.runInContext('prepare("x").at(-1).date',c),'2026-01-01');
+console.log('Frontend regression checks passed');
+// Exercise the complete render path and source switching without network access.
+const elements=new Map();
+function element(id){if(!elements.has(id))elements.set(id,{value:id==='fxSelect'?'bonbast_mid':'0',style:{},textContent:'',innerHTML:'',insertAdjacentHTML(_,v){this.innerHTML+=v;}});return elements.get(id);}
+c.document={getElementById:element};c.Chart=class {destroy(){}};c.input={...data,records:[{date:'2026-10-13',tepix:100,fx:{tgju_free:10,bonbast_mid:10},fx_age_days:{tgju_free:0,bonbast_mid:4}},{date:'2026-10-25',tepix:101,fx:{tgju_free:11},fx_age_days:{tgju_free:0}}]};
+vm.runInContext('RAW=input;render()',c);
+assert.match(element('coverage').textContent,/2026-10-09/);
+assert.match(element('coverage').textContent,/2026-10-13/);
+assert.match(element('coverage').textContent,/2026-10-25/);
+assert.match(element('sources').textContent,/Bonbast/);
+element('fxSelect').value='tgju_free';vm.runInContext('render()',c);
+assert.match(element('sources').textContent,/TGJU price_dollar_rl/);
+assert.doesNotMatch(element('coverage').textContent,/Coverage warning/);
+console.log('Render and source-switch checks passed');
